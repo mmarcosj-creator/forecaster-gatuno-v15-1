@@ -50,7 +50,7 @@ except Exception as exc:  # pragma: no cover - mensaje explicito en despliegue
     ) from exc
 
 
-VERSION = "V15.1-STABLE-GATUNO"
+VERSION = "V15.1.1-STABLE-GATUNO"
 APP_DATA_DIR = Path("app_data_v15_1")
 LINEUP_HISTORY_PATH = APP_DATA_DIR / "lineup_history.json"
 MODEL_CACHE_PATH = APP_DATA_DIR / "trained_model_cache.pkl"

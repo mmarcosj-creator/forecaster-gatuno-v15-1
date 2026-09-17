@@ -1,11 +1,12 @@
-# 🐾 Gatuno V15.1 Estable
+# 🐾 Gatuno V15.1.1 Estable
 
 Versión limpia y privada del pronosticador. Corrige el fallo de V15.0 que entrenaba con más de 12 mil partidos y sólo después comprobaba el calendario.
 
-## Qué mejora V15.1
+## Qué mejora V15.1.1
 
 - Comprueba primero que existen partidos futuros.
-- Divide la consulta de ESPN en bloques de siete días y recupera cada bloque por día si falla.
+- Divide la consulta de ESPN en bloques de siete días y recupera cada bloque por día si falla o llega vacío.
+- Agrega Sofascore como tercer respaldo diario, sin usarlo para fabricar cuotas.
 - Guarda la última agenda válida durante 72 horas para resistir caídas temporales.
 - Conserva el histórico comprimido dentro de `embedded_history.py`; no necesita `historical_fallback.csv.gz`.
 - Guarda el modelo calibrado y lo reutiliza mientras los datos no hayan cambiado.
@@ -27,7 +28,7 @@ La duración depende de las fuentes públicas y del servidor gratuito. Una demor
 3. En Streamlit Community Cloud crea una aplicación nueva.
 4. Selecciona el repositorio privado, la rama `main` y `app.py` como archivo principal.
 5. Restringe el acceso de la aplicación a las personas autorizadas.
-6. Pulsa **GENERAR PRONÓSTICOS V15.1** una sola vez y espera a que concluya.
+6. Pulsa **GENERAR PRONÓSTICOS V15.1.1** una sola vez y espera a que concluya.
 7. No borres la versión anterior hasta comprobar que la nueva muestra partidos.
 
 ## Archivos

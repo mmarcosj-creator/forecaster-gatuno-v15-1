@@ -15,7 +15,7 @@ import gatuno_audit as audit
 import gatuno_adaptive as adaptive
 import gatuno_quality as quality_monitor
 
-APP_VERSION="V15.1-STABLE-GATUNO"
+APP_VERSION="V15.1.1-FUENTES-GATUNO"
 DATA_DIR=Path("app_data_v15_1"); DATA_DIR.mkdir(exist_ok=True)
 MATCH_FILE=DATA_DIR/"latest_matches.csv"; MARKET_FILE=DATA_DIR/"latest_markets.csv"
 METRIC_FILE=DATA_DIR/"latest_validation.csv"; META_FILE=DATA_DIR/"meta.json"
@@ -56,7 +56,7 @@ def refresh():
 def signal(x):
     return {"VERDE":"🟢","AMARILLO":"🟡","ROJO":"🔴"}.get(str(x).upper(),"⚪")
 
-st.markdown(f"# 🐾 Gatuno V15.1 Estable\n**Motor limpio, recuperable y auditable · {APP_VERSION}**")
+st.markdown(f"# 🐾 Gatuno V15.1.1 Estable\n**Motor limpio, recuperable y auditable · {APP_VERSION}**")
 st.caption("Arquitectura nueva: pronóstico → congelado → cierre real → diagnóstico 7 días → propuesta → confirmación → ajuste temporal reversible.")
 
 meta=json.loads(META_FILE.read_text(encoding="utf-8")) if META_FILE.exists() else {}
@@ -68,17 +68,17 @@ if not ready:
         "el motor. La primera calibración puede tardar varios minutos; las siguientes reutilizan "
         "la caché mientras el histórico no cambie."
     )
-    if st.button("🐾 GENERAR PRONÓSTICOS V15.1",type="primary",use_container_width=True):
+    if st.button("🐾 GENERAR PRONÓSTICOS V15.1.1",type="primary",use_container_width=True):
         try:
             with st.status("Construyendo motor limpio…",expanded=True):
                 refresh()
-            st.success("Motor V15.1 listo.")
+            st.success("Motor V15.1.1 listo.")
             st.rerun()
         except Exception as e:
             message=str(e)
             if "calendario" in message.lower() or "partidos futuros" in message.lower():
-                st.error("Las fuentes del calendario no estuvieron disponibles. No se perdió ningún modelo ni historial.")
-                st.warning("Espera unos minutos y vuelve a pulsar el botón. V15.1 consulta primero el calendario para no hacerte esperar inútilmente.")
+                st.error("Las tres fuentes del calendario no entregaron partidos. No se perdió ningún modelo ni historial.")
+                st.warning("V15.1.1 consultó ESPN, Football-Data, Sofascore y la caché antes de detenerse.")
             else:
                 st.error("El motor no terminó.")
             st.code(message)

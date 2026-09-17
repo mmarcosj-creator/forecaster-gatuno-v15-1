@@ -29,6 +29,8 @@
 # - Football-Data: histórico europeo con corners/tarjetas/HT.
 # - ESPN: calendario de las 12 competiciones y respaldo histórico
 #   reciente para Brasil, Argentina y Perú.
+# - Sofascore: respaldo de calendario diario cuando ESPN y Football-Data
+#   no entregan una agenda utilizable. No se usa para fabricar cuotas.
 # - Open-Meteo: geocodificación + clima futuro + elevación.
 #
 # ============================================================
@@ -62,7 +64,7 @@ import pandas as pd
 # CONFIGURACION
 # ============================================================
 
-VERSION = "V15.1-STABLE-CORE"
+VERSION = "V15.1.1-STABLE-CORE"
 TOP_N = 30
 
 # Perú: UTC-5 todo el año. Evita ZoneInfo/tzdata en Pydroid.
@@ -1040,8 +1042,11 @@ def eventos_scoreboard_espn(league, start_date, end_date):
     while chunk_start <= end:
         chunk_end = min(end, chunk_start + pd.Timedelta(days=6))
         result = _scoreboard_cached_request(league, chunk_start, chunk_end)
-        if result is None:
-            # Primero se prueba un solo día. Si tampoco responde, se evita
+        if result is None or (not result and chunk_end > chunk_start):
+            # ESPN puede responder una lista vacía a una consulta por rango
+            # aunque sí entregue eventos al consultar las fechas una a una.
+            # También se usa esta ruta cuando la consulta extensa falla.
+            # Primero se prueba un solo día; si ni siquiera responde, se evita
             # multiplicar el mismo timeout por cada fecha del intervalo.
             first_daily = _scoreboard_cached_request(league, chunk_start, chunk_start)
             if first_daily is not None:
@@ -2136,6 +2141,168 @@ def descargar_fixtures_football_data(inicio, fin):
     return normalizar_df(pd.DataFrame(rows)) if rows else pd.DataFrame()
 
 
+def _sofa_comp_key(event):
+    """Mapea sólo las competiciones objetivo; ante duda devuelve None."""
+    tournament = event.get("tournament") or {}
+    unique = tournament.get("uniqueTournament") or {}
+    category = tournament.get("category") or {}
+    name = norm_texto(unique.get("name") or tournament.get("name") or "")
+    country = norm_texto(
+        category.get("country", {}).get("name")
+        if isinstance(category.get("country"), dict)
+        else category.get("name") or ""
+    )
+
+    if "libertadores" in name:
+        return "LIB"
+    if "sudamericana" in name:
+        return "SUD"
+    if "europa league" in name and "conference" not in name:
+        return "UEL"
+    if "champions league" in name and "women" not in name and "youth" not in name:
+        return "UCL"
+    if "copa do brasil" in name:
+        return "CDB"
+    if country == "brazil" and (
+        "brasileirao" in name or "brasileiro serie a" in name or name == "serie a"
+    ):
+        return "BRA"
+    if country == "spain" and ("laliga" in name or "la liga" in name):
+        return "ESP"
+    if country == "portugal" and "liga portugal" in name:
+        return "POR"
+    if country in {"turkey", "turkiye"} and "super lig" in name:
+        return "TUR"
+    if country == "england" and name == "premier league":
+        return "ENG"
+    if country == "argentina" and any(
+        token in name for token in ("liga profesional", "primera division", "primera nacional")
+    ):
+        # Primera Nacional no es la primera división y queda excluida.
+        return None if "primera nacional" in name else "ARG"
+    if country == "peru" and any(
+        token in name for token in ("liga 1", "primera division")
+    ):
+        return "PER"
+    return None
+
+
+def _eventos_sofascore_fecha(day):
+    token = pd.Timestamp(day).strftime("%Y-%m-%d")
+    path = cache_json_path(f"sofascore_schedule_{token}")
+    fresh = leer_json_cache(path, max_age_hours=2)
+    if isinstance(fresh, dict) and isinstance(fresh.get("events"), list):
+        return fresh["events"]
+
+    endpoints = (
+        f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{token}",
+        f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{token}",
+    )
+    last_error = None
+    for url in endpoints:
+        try:
+            payload = descargar_json(url, timeout=8)
+            if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+                raise ValueError("respuesta sin lista de eventos")
+            guardar_json_cache(path, payload)
+            return payload["events"]
+        except Exception as exc:
+            last_error = exc
+
+    stale = leer_json_cache(path, max_age_hours=72)
+    if isinstance(stale, dict) and isinstance(stale.get("events"), list):
+        return stale["events"]
+    raise RuntimeError(f"Sofascore {token}: {last_error}")
+
+
+def descargar_fixtures_sofascore(inicio, fin):
+    """Respaldo diario y estricto para las doce competiciones configuradas."""
+    days = list(pd.date_range(pd.Timestamp(inicio), pd.Timestamp(fin), freq="D"))
+    events = []
+    errors = []
+
+    # Siete consultas diarias independientes; tres workers limitan carga y espera.
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        jobs = {executor.submit(_eventos_sofascore_fecha, day): day for day in days}
+        for job in as_completed(jobs):
+            try:
+                events.extend(job.result())
+            except Exception as exc:
+                errors.append(str(exc))
+
+    rows = []
+    seen = set()
+    for event in events:
+        comp_key = _sofa_comp_key(event)
+        if not comp_key:
+            continue
+        home_obj = event.get("homeTeam") or {}
+        away_obj = event.get("awayTeam") or {}
+        home = str(home_obj.get("name") or home_obj.get("shortName") or "").strip()
+        away = str(away_obj.get("name") or away_obj.get("shortName") or "").strip()
+        timestamp = numero(event.get("startTimestamp"))
+        if not home or not away or pd.isna(timestamp):
+            continue
+        kickoff_utc = pd.to_datetime(int(timestamp), unit="s", utc=True, errors="coerce")
+        if pd.isna(kickoff_utc):
+            continue
+        local_time = kickoff_utc.tz_convert(TZ_PERU)
+        match_date = pd.Timestamp(local_time.date())
+        if match_date < pd.Timestamp(inicio) or match_date > pd.Timestamp(fin):
+            continue
+
+        event_id = str(event.get("id") or "")
+        unique_key = event_id or f"{comp_key}-{int(timestamp)}-{norm_texto(home)}-{norm_texto(away)}"
+        if unique_key in seen:
+            continue
+        seen.add(unique_key)
+
+        status = event.get("status") or {}
+        status_type = str(status.get("type") or "").lower()
+        completed = status_type in {
+            "finished", "afterextra", "afterpenalties", "canceled", "postponed"
+        }
+        status_state = "post" if completed else ("in" if status_type in {"inprogress", "live"} else "pre")
+        tournament = event.get("tournament") or {}
+        round_info = event.get("roundInfo") or {}
+        info = COMPETICIONES[comp_key]
+        rows.append({
+            "Date": match_date,
+            "KickoffUTC": kickoff_utc.isoformat(),
+            "HoraPeru": local_time.strftime("%H:%M"),
+            "CompKey": comp_key,
+            "Grupo": info["grupo"],
+            "Competicion": info["nombre"],
+            "TipoCompeticion": info["tipo"],
+            "StageText": str(round_info.get("name") or tournament.get("name") or ""),
+            "HomeOriginal": home,
+            "AwayOriginal": away,
+            "HomeTeam": home,
+            "AwayTeam": away,
+            "HomeESPNID": "",
+            "AwayESPNID": "",
+            "EventID": f"SOFA-{event_id or unique_key}",
+            "StatusState": status_state,
+            "StatusName": str(status.get("description") or status_type or "SCHEDULED"),
+            "Completed": completed,
+            "EspnH": np.nan,
+            "EspnD": np.nan,
+            "EspnA": np.nan,
+            "Stadium": "",
+            "VenueCity": "",
+            "VenueState": "",
+            "VenueCountry": "",
+            "FuenteFixture": "Sofascore",
+        })
+
+    if errors:
+        log(f"  Sofascore: {len(errors)} fechas no disponibles")
+    if rows:
+        log(f"  Sofascore: {len(rows)} partidos objetivo")
+        return normalizar_df(pd.DataFrame(rows))
+    return pd.DataFrame()
+
+
 def guardar_cache_fixtures(fixtures):
     """Guarda atómicamente el último calendario utilizable."""
     if fixtures is None or fixtures.empty:
@@ -2228,7 +2395,18 @@ def descargar_fixtures_objetivo(inicio, fin):
 
     espn = normalizar_df(pd.DataFrame(rows)) if rows else pd.DataFrame()
     secondary = descargar_fixtures_football_data(inicio, fin)
-    frames = [frame for frame in (espn, secondary) if frame is not None and not frame.empty]
+    # La tercera fuente se consulta sólo si las dos fuentes originales no
+    # produjeron ningún partido, para reducir tráfico y superficie de fallo.
+    tertiary = pd.DataFrame()
+    if espn.empty and secondary.empty:
+        try:
+            tertiary = descargar_fixtures_sofascore(inicio, fin)
+        except Exception as exc:
+            log(f"  Sofascore fixtures no disponible: {exc}")
+    frames = [
+        frame for frame in (espn, secondary, tertiary)
+        if frame is not None and not frame.empty
+    ]
 
     if not frames:
         cached = cargar_cache_fixtures(inicio, fin)
@@ -2236,13 +2414,14 @@ def descargar_fixtures_objetivo(inicio, fin):
             log(f"  Calendario recuperado desde caché local: {len(cached)} partidos")
             return filtrar_fixtures_desde_ahora(cached)
         raise RuntimeError(
-            "No se obtuvo calendario futuro. ESPN y Football-Data no respondieron "
-            "y todavía no existe una caché válida. Reintenta en unos minutos."
+            "No se obtuvo calendario futuro. ESPN, Football-Data y Sofascore no "
+            "entregaron partidos y todavía no existe una caché válida."
         )
 
     fixtures = normalizar_df(pd.concat(frames, ignore_index=True, sort=False))
-    # ESPN conserva prioridad cuando ambas fuentes describen el mismo partido.
-    fixtures["_source_priority"] = fixtures["FuenteFixture"].astype(str).ne("ESPN").astype(int)
+    # ESPN conserva prioridad; Football-Data precede al respaldo diario.
+    priority = {"ESPN": 0, "Football-Data fixtures": 1, "Sofascore": 2}
+    fixtures["_source_priority"] = fixtures["FuenteFixture"].map(priority).fillna(9)
     fixtures = fixtures.sort_values("_source_priority").drop_duplicates(
         subset=["CompKey", "Date", "HomeTeam", "AwayTeam"],
         keep="first",
@@ -3803,7 +3982,7 @@ def main():
 #
 # ============================================================
 
-VERSION = "V15.1-STABLE-CORE"
+VERSION = "V15.1.1-STABLE-CORE"
 
 # Umbrales estrictos: deliberadamente más exigentes que V8.
 P_MIN_DOG_GOL_STABLE = 0.56
