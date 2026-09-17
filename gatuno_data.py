@@ -357,7 +357,16 @@ def parece_html(raw):
         for x in (b"<!doctype html", b"<html", b"<head", b"<body")
     )
 
+import os
 
+def descargar_bytes(url, timeout=None, headers=None, reintentos=None):
+    fast_mode = os.environ.get("GATUNO_FAST_MODE", "0") == "1"
+    if timeout is None:
+        timeout = 2.5 if fast_mode else 35
+    if reintentos is None:
+        reintentos = 0 if fast_mode else 2
+        
+    # El resto de tu función original (requests.get, manejo de errores, etc.) continúa aquí abajo sin cambios.
 def descargar_bytes(url, timeout=None, headers=None, reintentos=None):
     """Descarga con limites aptos para ejecucion interactiva.
 
