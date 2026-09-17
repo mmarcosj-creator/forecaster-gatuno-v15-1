@@ -1,3 +1,4 @@
+from __future__ import annotations
 """FORECASTER FUTBOL V10 PRO.
 
 Motor de pronosticos individuales por partido.  No inventa cuotas y no
@@ -43,7 +44,7 @@ def obtener_modelo_optimizado():
         pass
         
     return modelo
-from __future__ import annotations
+
 
 import hashlib
 import json
