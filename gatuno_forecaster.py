@@ -16,7 +16,33 @@ La etiqueta de color describe evidencia estadistica; no es una orden de
 apuesta.  Si faltan datos, el partido sigue visible, pero el mercado se marca
 como NO MODELABLE / ROJO en vez de fabricar una seleccion.
 """
+import os
+import pickle
 
+CACHE_FILE = "trained_model_cache.pkl"
+
+def obtener_modelo_optimizado():
+    """
+    Carga el modelo desde la caché local o ejecuta el entrenamiento si no existe.
+    """
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "rb") as f:
+                modelo = pickle.load(f)
+            return modelo
+        except Exception:
+            pass
+
+    # Reemplaza 'entrenar_modelo_nuevo()' por la función que ya usa tu archivo para entrenar
+    modelo = entrenar_modelo_nuevo() 
+    
+    try:
+        with open(CACHE_FILE, "wb") as f:
+            pickle.dump(modelo, f)
+    except Exception:
+        pass
+        
+    return modelo
 from __future__ import annotations
 
 import hashlib
